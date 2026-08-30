@@ -36,6 +36,7 @@ export type AccessibleCodeEnvironmentConfiguration = {
   type: 'managed' | 'attached';
   baseURL: string;
   owner: 'principal';
+  workerId?: string;
 };
 
 const ENVIRONMENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -159,6 +160,7 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
       type: environment.type,
       baseURL: environment.baseURL,
       owner: 'principal',
+      workerId: environment.workerId,
     }));
   }
 

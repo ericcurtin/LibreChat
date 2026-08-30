@@ -16,6 +16,7 @@ const requireCodeEnvironmentManage = requireCapability(SystemCapabilities.MANAGE
 
 router.use(requireJwtAuth);
 router.get('/', handlers.list);
+router.post('/pairings', handlers.pair);
 router.post('/', requireCodeEnvironmentManage, handlers.register);
 
 module.exports = router;

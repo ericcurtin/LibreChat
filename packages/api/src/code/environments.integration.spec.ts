@@ -38,6 +38,7 @@ describe('code environment registry', () => {
         name: "Danny's VM",
         type: 'attached',
         baseURL: 'https://code.example.com',
+        workerId: 'danny-worker',
       },
     });
 
@@ -66,6 +67,7 @@ describe('code environment registry', () => {
         type: 'attached',
         baseURL: 'https://code.example.com',
         owner: 'principal',
+        workerId: 'danny-worker',
       },
     ]);
   });
