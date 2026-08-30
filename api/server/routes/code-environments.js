@@ -18,5 +18,6 @@ router.use(requireJwtAuth);
 router.get('/', handlers.list);
 router.post('/pairings', handlers.pair);
 router.post('/', requireCodeEnvironmentManage, handlers.register);
+router.delete('/:environmentId', handlers.remove);
 
 module.exports = router;

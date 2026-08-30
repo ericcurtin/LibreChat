@@ -31,6 +31,7 @@ const mockCancelAgentTriggerUserDeletion = jest.fn();
 const mockCancelAndDrainSubagentThreads = jest.fn();
 const mockQuiesceUserSchedules = jest.fn();
 const mockDeleteSchedulesByUser = jest.fn();
+const mockRevokeUserCodeEnvironmentWorkers = jest.fn();
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn(), info: jest.fn() },
@@ -52,6 +53,7 @@ jest.mock('@librechat/api', () => ({
   needsRefresh: jest.fn(),
   getNewS3URL: jest.fn(),
   deleteAllSharedLinksWithCleanup: (...args) => mockDeleteAllSharedLinksWithCleanup(...args),
+  revokeUserCodeEnvironmentWorkers: (...args) => mockRevokeUserCodeEnvironmentWorkers(...args),
   GenerationJobManager: {
     getCleanupBlockingJobIdsForUser: (...args) => mockGetCleanupBlockingJobIdsForUser(...args),
     abortJob: (...args) => mockAbortJob(...args),
@@ -137,7 +139,7 @@ jest.mock('~/server/services/Schedules', () => ({
 }));
 
 jest.mock('~/server/services/Config', () => ({
-  getAppConfig: jest.fn(),
+  getAppConfig: jest.fn().mockResolvedValue({}),
 }));
 
 jest.mock('~/cache', () => ({
@@ -182,6 +184,7 @@ function stubDeletionMocks() {
   mockCancelAndDrainSubagentThreads.mockResolvedValue();
   mockQuiesceUserSchedules.mockResolvedValue(true);
   mockDeleteSchedulesByUser.mockResolvedValue();
+  mockRevokeUserCodeEnvironmentWorkers.mockResolvedValue(0);
 }
 
 beforeEach(() => {
@@ -203,7 +206,13 @@ describe('deleteUserController - 2FA enforcement', () => {
     expect(mockDeleteUserAgents).toHaveBeenCalledWith('user1');
     expect(mockDeleteUserPrompts).toHaveBeenCalledWith('user1');
     expect(mockDeleteUserSkills).toHaveBeenCalledWith('user1');
+    expect(mockRevokeUserCodeEnvironmentWorkers).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user1' }),
+    );
     expect(mockVerifyOTPOrBackupCode).not.toHaveBeenCalled();
+    expect(mockRevokeUserCodeEnvironmentWorkers.mock.invocationCallOrder[0]).toBeLessThan(
+      mockBeginAgentTriggerUserDeletion.mock.invocationCallOrder[0],
+    );
     expect(mockBeginAgentTriggerUserDeletion.mock.invocationCallOrder[0]).toBeLessThan(
       mockPrepareAgentTriggerUserPurge.mock.invocationCallOrder[0],
     );
@@ -236,6 +245,20 @@ describe('deleteUserController - 2FA enforcement', () => {
     expect(mockAbortJob.mock.invocationCallOrder[0]).toBeLessThan(
       mockDeleteMessages.mock.invocationCallOrder[0],
     );
+  });
+
+  it('keeps the account when a personal code worker cannot be revoked', async () => {
+    const req = { user: { id: 'user1', _id: 'user1', email: 'a@b.com' }, body: {} };
+    const res = createRes();
+    mockGetUserById.mockResolvedValue({ _id: 'user1', twoFactorEnabled: false });
+    mockRevokeUserCodeEnvironmentWorkers.mockRejectedValueOnce(new Error('worker unavailable'));
+
+    await deleteUserController(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(mockBeginAgentTriggerUserDeletion).not.toHaveBeenCalled();
+    expect(mockDeleteMessages).not.toHaveBeenCalled();
+    expect(mockDeleteUserById).not.toHaveBeenCalled();
   });
 
   it('proceeds with deletion when user has no 2FA record', async () => {

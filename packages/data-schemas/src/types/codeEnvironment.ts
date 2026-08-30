@@ -7,6 +7,7 @@ export type CodeEnvironment = {
   baseURL: string;
   createdBy: Types.ObjectId;
   workerId?: string;
+  controlPlaneId?: string;
   workerPrincipal?: {
     type: 'deployment' | 'tenant' | 'user' | 'role' | 'group';
     id: string;
