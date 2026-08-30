@@ -24,7 +24,7 @@ describe('code environment HTTP handlers', () => {
     const register = jest.fn();
     const handlers = createCodeEnvironmentHttpHandlers({
       getAppConfig: jest.fn(),
-      registry: { register, listAccessible: jest.fn() },
+      registry: { register, listAccessible: jest.fn(), remove: jest.fn() },
     });
     const res = response();
 
@@ -143,7 +143,7 @@ describe('code environment HTTP handlers', () => {
     const fetchImpl = jest.fn();
     const handlers = createCodeEnvironmentHttpHandlers({
       getAppConfig: jest.fn(),
-      registry: { register: jest.fn(), listAccessible: jest.fn() },
+      registry: { register: jest.fn(), listAccessible: jest.fn(), remove: jest.fn() },
       principalAuthEnabled: jest.fn(() => false),
       fetchImpl,
     });
@@ -327,6 +327,7 @@ describe('code environment HTTP handlers', () => {
         id: 'code-generated',
         name: 'Personal VM',
         type: 'attached' as const,
+        canDelete: true,
       };
     });
     const fetchImpl = jest.fn().mockResolvedValue({
