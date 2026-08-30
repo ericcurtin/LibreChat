@@ -73,6 +73,13 @@ export class CodeEnvironmentValidationError extends Error {
   }
 }
 
+export class CodeEnvironmentLimitError extends Error {
+  constructor() {
+    super('Personal code environment limit reached');
+    this.name = 'CodeEnvironmentLimitError';
+  }
+}
+
 function normalizeRegistration(input: CodeEnvironmentRegistration): CodeEnvironmentRegistration {
   const id = input.id.trim();
   const name = normalizeCodeEnvironmentName(input.name);
@@ -123,12 +130,12 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
   register: (params: {
     actor: CodeEnvironmentPrincipalContext;
     environment: CodeEnvironmentRegistration;
+    maxOwned?: number;
   }) => Promise<CodeEnvironmentSummary>;
   listAccessible: (actor: CodeEnvironmentPrincipalContext) => Promise<CodeEnvironmentSummary[]>;
   listAccessibleConfigurations: (
     actor: CodeEnvironmentPrincipalContext,
   ) => Promise<AccessibleCodeEnvironmentConfiguration[]>;
-  countOwned: (actor: CodeEnvironmentPrincipalContext) => Promise<number>;
   remove: (params: {
     actor: CodeEnvironmentPrincipalContext;
     environmentId: string;
@@ -141,12 +148,14 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
   async function register({
     actor,
     environment: input,
+    maxOwned,
   }: {
     actor: CodeEnvironmentPrincipalContext;
     environment: CodeEnvironmentRegistration;
+    maxOwned?: number;
   }): Promise<CodeEnvironmentSummary> {
     const environment = normalizeRegistration(input);
-    const created = await methods.createCodeEnvironment({
+    const createInput = {
       environmentId: environment.id,
       name: environment.name,
       type: environment.type,
@@ -156,7 +165,14 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
       revocationTokenEnv: environment.revocationTokenEnv,
       workerPrincipal: environment.workerPrincipal,
       createdBy: new Types.ObjectId(actor.userId),
-    });
+    };
+    const created =
+      maxOwned == null
+        ? await methods.createCodeEnvironment(createInput)
+        : await methods.createCodeEnvironmentWithinOwnerLimit(createInput, maxOwned);
+    if (created == null) {
+      throw new CodeEnvironmentLimitError();
+    }
     try {
       const permission = await access.grantPermission({
         principalType: PrincipalType.USER,
@@ -195,20 +211,16 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
     actor: CodeEnvironmentPrincipalContext,
   ): Promise<CodeEnvironmentSummary[]> {
     const environments = await findAccessible(actor);
-    return await Promise.all(
-      environments.map(async (environment) =>
-        toSummary(
-          environment,
-          await access.checkPermission({
-            userId: actor.userId.toString(),
-            role: actor.role,
-            resourceType: ResourceType.CODE_ENVIRONMENT,
-            resourceId: environment._id,
-            requiredPermission: PermissionBits.DELETE,
-          }),
-        ),
-      ),
-    );
+    const permissions = await access.getResourcePermissionsMap({
+      userId: actor.userId,
+      role: actor.role ?? '',
+      resourceType: ResourceType.CODE_ENVIRONMENT,
+      resourceIds: environments.map((environment) => environment._id),
+    });
+    return environments.map((environment) => {
+      const permission = permissions.get(environment._id.toString()) ?? 0;
+      return toSummary(environment, (permission & PermissionBits.DELETE) === PermissionBits.DELETE);
+    });
   }
 
   async function listAccessibleConfigurations(
@@ -223,10 +235,6 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
       owner: 'principal',
       workerId: environment.workerId,
     }));
-  }
-
-  async function countOwned(actor: CodeEnvironmentPrincipalContext): Promise<number> {
-    return (await methods.findCodeEnvironmentsByCreator(actor.userId)).length;
   }
 
   async function remove({
@@ -280,7 +288,7 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
     return toSummary(deleted, true);
   }
 
-  return { register, listAccessible, listAccessibleConfigurations, countOwned, remove };
+  return { register, listAccessible, listAccessibleConfigurations, remove };
 }
 
 export class CodeEnvironmentInUseError extends Error {

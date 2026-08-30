@@ -6,6 +6,7 @@ export type CodeEnvironment = {
   type: 'managed' | 'attached';
   baseURL: string;
   createdBy: Types.ObjectId;
+  ownerSlot?: number;
   workerId?: string;
   controlPlaneId?: string;
   revocationTokenEnv?: string;

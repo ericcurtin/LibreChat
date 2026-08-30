@@ -38,7 +38,6 @@ export interface AdminUsersDeps {
   cancelAgentTriggerUserPurge: (userId: string, fenceStartedAt: Date) => Promise<boolean>;
   purgeAgentTriggerDeliveriesForUser: (userId: string) => Promise<void>;
   revokeUserCodeEnvironmentWorkers?: (userId: string) => Promise<number>;
-  deleteUserCodeEnvironments?: (userId: string) => Promise<number>;
   /**
    * Thin data-layer delete — removes the User document only.
    * Full cascade of user-owned resources (conversations, messages, files, tokens, etc.)
@@ -76,7 +75,6 @@ export function createAdminUsersHandlers(deps: AdminUsersDeps): {
     revokeUserCodeEnvironmentWorkers,
     deleteUserCodeEnvironments,
     deleteUserById,
-    deleteUserCodeEnvironments,
     deleteConfig,
     deleteAclEntries,
   } = deps;
@@ -195,7 +193,6 @@ export function createAdminUsersHandlers(deps: AdminUsersDeps): {
       }
       await prepareAgentTriggerUserPurge(id, triggerDeletionFence, targetUser?.tenantId);
       await drainAgentTriggerDeliveriesForUser(id);
-      await revokeUserCodeEnvironmentWorkers?.(id);
 
       const result = await deleteUserById(id);
 
@@ -206,7 +203,11 @@ export function createAdminUsersHandlers(deps: AdminUsersDeps): {
         return res.status(404).json({ error: 'User not found' });
       }
       userDeleted = true;
-      await deleteUserCodeEnvironments?.(id);
+      try {
+        await revokeUserCodeEnvironmentWorkers?.(id);
+      } catch (error) {
+        logger.error('[adminUsers] failed to revoke code environment workers:', id, error);
+      }
       await purgeAgentTriggerDeliveriesForUser(id);
 
       if (targetUser?.role === SystemRoles.ADMIN) {

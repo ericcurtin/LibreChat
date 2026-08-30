@@ -36,7 +36,6 @@ const handlers = createAdminUsersHandlers({
     }),
   deleteUserCodeEnvironments: db.deleteUserCodeEnvironments,
   deleteUserById: db.deleteUserById,
-  deleteUserCodeEnvironments: db.deleteUserCodeEnvironments,
   deleteConfig: db.deleteConfig,
   deleteAclEntries: db.deleteAclEntries,
 });
