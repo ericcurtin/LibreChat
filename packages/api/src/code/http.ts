@@ -12,18 +12,18 @@ import type { GetAppConfigOptions } from '~/app/service';
 import type { ServerRequest } from '~/types/http';
 import type { CodeBridgeFetch } from './bridge';
 import {
+  CodeEnvironmentInUseError,
+  CodeEnvironmentLimitError,
+  CodeEnvironmentValidationError,
+  normalizeCodeEnvironmentName,
+} from './environments';
+import {
   CodeBridgeLifecycleError,
   CodeBridgePairingError,
   createCodeBridgePairing,
   readCodeBridgeSecret,
   revokeCodeBridgeWorker,
 } from './bridge';
-import {
-  CodeEnvironmentInUseError,
-  CodeEnvironmentLimitError,
-  CodeEnvironmentValidationError,
-  normalizeCodeEnvironmentName,
-} from './environments';
 import { getCodeApiTenantId, isCodeApiJwtAuthEnabled } from '~/auth/codeapi';
 
 type Registry = {
@@ -161,7 +161,7 @@ export function createCodeEnvironmentHttpHandlers(deps: CodeEnvironmentHttpDeps)
     ]);
     return res.status(200).json({
       environments,
-      controlPlanes: principalControlPlanes(appConfig),
+      controlPlanes: principalAuthEnabled() ? principalControlPlanes(appConfig) : [],
     });
   }
 
