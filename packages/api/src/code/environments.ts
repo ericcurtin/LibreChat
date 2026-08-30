@@ -28,6 +28,10 @@ export type CodeEnvironmentRegistration = {
   type: 'managed' | 'attached';
   baseURL: string;
   workerId?: string;
+  workerPrincipal?: {
+    type: 'deployment' | 'tenant' | 'user' | 'role' | 'group';
+    id: string;
+  };
 };
 
 export type AccessibleCodeEnvironmentConfiguration = {
@@ -41,6 +45,15 @@ export type AccessibleCodeEnvironmentConfiguration = {
 
 const ENVIRONMENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const WORKER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const WORKER_PRINCIPAL_ID_PATTERN = /^\S(?:.{0,254}\S)?$/;
+
+export function normalizeCodeEnvironmentName(input: string): string {
+  const name = input.trim();
+  if (name.length < 1 || name.length > 100) {
+    throw new Error('Code environment name must contain between 1 and 100 characters');
+  }
+  return name;
+}
 
 export class CodeEnvironmentValidationError extends Error {
   constructor(message: string) {
@@ -51,7 +64,7 @@ export class CodeEnvironmentValidationError extends Error {
 
 function normalizeRegistration(input: CodeEnvironmentRegistration): CodeEnvironmentRegistration {
   const id = input.id.trim();
-  const name = input.name.trim();
+  const name = normalizeCodeEnvironmentName(input.name);
   const baseURL = input.baseURL.trim().replace(/\/+$/, '');
   const workerId = input.workerId?.trim();
   if (!ENVIRONMENT_ID_PATTERN.test(id)) {
@@ -67,6 +80,12 @@ function normalizeRegistration(input: CodeEnvironmentRegistration): CodeEnvironm
   }
   if (workerId != null && !WORKER_ID_PATTERN.test(workerId)) {
     throw new CodeEnvironmentValidationError('Code environment worker id is invalid');
+  }
+  if (
+    input.workerPrincipal != null &&
+    !WORKER_PRINCIPAL_ID_PATTERN.test(input.workerPrincipal.id)
+  ) {
+    throw new CodeEnvironmentValidationError('Code environment worker principal is invalid');
   }
   return { ...input, id, name, baseURL, workerId };
 }
@@ -112,6 +131,7 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
       type: environment.type,
       baseURL: environment.baseURL,
       workerId: environment.workerId,
+      workerPrincipal: environment.workerPrincipal,
       createdBy: new Types.ObjectId(actor.userId),
     });
     try {
@@ -140,7 +160,12 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
       resourceType: ResourceType.CODE_ENVIRONMENT,
       requiredPermissions: PermissionBits.VIEW,
     });
-    return await methods.findCodeEnvironmentsByIds(ids);
+    const environments = await methods.findCodeEnvironmentsByIds(ids);
+    const userId = actor.userId.toString();
+    return environments.filter(
+      (environment) =>
+        environment.workerPrincipal?.type !== 'user' || environment.workerPrincipal.id === userId,
+    );
   }
 
   async function listAccessible(
