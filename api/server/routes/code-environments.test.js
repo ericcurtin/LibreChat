@@ -33,7 +33,11 @@ jest.mock('~/server/middleware/roles/capabilities', () => ({
 }));
 
 jest.mock('~/server/middleware', () => ({ requireJwtAuth: mockRequireJwtAuth }));
+jest.mock('~/server/middleware/limiters/codeEnvironmentPairingLimiter', () =>
+  jest.fn((_req, _res, next) => next()),
+);
 jest.mock('~/server/services/Config', () => ({ getAppConfig: jest.fn() }));
+jest.mock('~/models', () => ({ isAgentTriggerPrincipalActive: jest.fn() }));
 
 function createApp() {
   delete require.cache[require.resolve('./code-environments')];

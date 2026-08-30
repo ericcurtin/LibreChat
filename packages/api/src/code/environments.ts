@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { createMethods } from '@librechat/data-schemas';
+import { createMethods, logger } from '@librechat/data-schemas';
 import {
   AccessRoleIds,
   PermissionBits,
@@ -20,6 +20,7 @@ export type CodeEnvironmentSummary = {
   id: string;
   name: string;
   type: 'managed' | 'attached';
+  canDelete: boolean;
 };
 
 export type CodeEnvironmentRegistration = {
@@ -29,6 +30,7 @@ export type CodeEnvironmentRegistration = {
   baseURL: string;
   workerId?: string;
   controlPlaneId?: string;
+  revocationTokenEnv?: string;
   workerPrincipal?: {
     type: 'deployment' | 'tenant' | 'user' | 'role' | 'group';
     id: string;
@@ -48,6 +50,7 @@ export type CodeEnvironmentLifecycleTarget = CodeEnvironmentSummary & {
   baseURL: string;
   workerId?: string;
   controlPlaneId?: string;
+  revocationTokenEnv?: string;
   workerPrincipal?: CodeEnvironmentRegistration['workerPrincipal'];
 };
 
@@ -98,17 +101,21 @@ function normalizeRegistration(input: CodeEnvironmentRegistration): CodeEnvironm
   return { ...input, id, name, baseURL, workerId };
 }
 
-function toSummary(environment: {
-  _id: Types.ObjectId;
-  environmentId: string;
-  name: string;
-  type: 'managed' | 'attached';
-}): CodeEnvironmentSummary {
+function toSummary(
+  environment: {
+    _id: Types.ObjectId;
+    environmentId: string;
+    name: string;
+    type: 'managed' | 'attached';
+  },
+  canDelete = false,
+): CodeEnvironmentSummary {
   return {
     resourceId: environment._id.toString(),
     id: environment.environmentId,
     name: environment.name,
     type: environment.type,
+    canDelete,
   };
 }
 
@@ -121,6 +128,7 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
   listAccessibleConfigurations: (
     actor: CodeEnvironmentPrincipalContext,
   ) => Promise<AccessibleCodeEnvironmentConfiguration[]>;
+  countOwned: (actor: CodeEnvironmentPrincipalContext) => Promise<number>;
   remove: (params: {
     actor: CodeEnvironmentPrincipalContext;
     environmentId: string;
@@ -145,6 +153,7 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
       baseURL: environment.baseURL,
       workerId: environment.workerId,
       controlPlaneId: environment.controlPlaneId,
+      revocationTokenEnv: environment.revocationTokenEnv,
       workerPrincipal: environment.workerPrincipal,
       createdBy: new Types.ObjectId(actor.userId),
     });
@@ -160,7 +169,7 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
       if (permission == null) {
         throw new Error('Unable to grant code environment ownership');
       }
-      return toSummary(created);
+      return toSummary(created, true);
     } catch (error) {
       await methods.deleteCodeEnvironmentById(created._id);
       throw error;
@@ -186,7 +195,20 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
     actor: CodeEnvironmentPrincipalContext,
   ): Promise<CodeEnvironmentSummary[]> {
     const environments = await findAccessible(actor);
-    return environments.map(toSummary);
+    return await Promise.all(
+      environments.map(async (environment) =>
+        toSummary(
+          environment,
+          await access.checkPermission({
+            userId: actor.userId.toString(),
+            role: actor.role,
+            resourceType: ResourceType.CODE_ENVIRONMENT,
+            resourceId: environment._id,
+            requiredPermission: PermissionBits.DELETE,
+          }),
+        ),
+      ),
+    );
   }
 
   async function listAccessibleConfigurations(
@@ -203,6 +225,10 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
     }));
   }
 
+  async function countOwned(actor: CodeEnvironmentPrincipalContext): Promise<number> {
+    return (await methods.findCodeEnvironmentsByCreator(actor.userId)).length;
+  }
+
   async function remove({
     actor,
     environmentId,
@@ -214,6 +240,12 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
   }): Promise<CodeEnvironmentSummary | null> {
     const environment = await methods.findCodeEnvironmentByEnvironmentId(environmentId);
     if (environment == null) return null;
+    if (
+      environment.workerPrincipal?.type === 'user' &&
+      environment.workerPrincipal.id !== actor.userId.toString()
+    ) {
+      return null;
+    }
     const allowed = await access.checkPermission({
       userId: actor.userId.toString(),
       role: actor.role,
@@ -222,22 +254,38 @@ export function createCodeEnvironmentRegistry(mongoose: typeof import('mongoose'
       requiredPermission: PermissionBits.DELETE,
     });
     if (!allowed) return null;
+    const Agent = mongoose.models.Agent;
+    if (Agent != null && (await Agent.exists({ code_environment_id: environmentId })) != null) {
+      throw new CodeEnvironmentInUseError(environmentId);
+    }
 
     await beforeDelete?.({
       ...toSummary(environment),
       baseURL: environment.baseURL,
       workerId: environment.workerId,
       controlPlaneId: environment.controlPlaneId,
+      revocationTokenEnv: environment.revocationTokenEnv,
       workerPrincipal: environment.workerPrincipal,
     });
     const deleted = await methods.deleteCodeEnvironmentById(environment._id);
     if (deleted == null) return null;
-    await access.removeAllPermissions({
-      resourceType: ResourceType.CODE_ENVIRONMENT,
-      resourceId: environment._id,
-    });
-    return toSummary(deleted);
+    try {
+      await access.removeAllPermissions({
+        resourceType: ResourceType.CODE_ENVIRONMENT,
+        resourceId: environment._id,
+      });
+    } catch (error) {
+      logger.warn('[code-environments] environment deleted with orphaned ACL entries', error);
+    }
+    return toSummary(deleted, true);
   }
 
-  return { register, listAccessible, listAccessibleConfigurations, remove };
+  return { register, listAccessible, listAccessibleConfigurations, countOwned, remove };
+}
+
+export class CodeEnvironmentInUseError extends Error {
+  constructor(public readonly environmentId: string) {
+    super(`Code environment is still referenced by an agent: ${environmentId}`);
+    this.name = 'CodeEnvironmentInUseError';
+  }
 }
